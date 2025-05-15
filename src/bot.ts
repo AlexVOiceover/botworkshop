@@ -1,6 +1,7 @@
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
 import { queryKnowledge } from './chromaUtils';
+import { generateResponse } from './openaiUtils';
 
 // Load environment variables
 dotenv.config();
@@ -12,8 +13,27 @@ if (!token) {
   throw new Error('No TELEGRAM_API_TOKEN in .env file');
 }
 
+// Custom prompt for RAG responses
+const customRagPrompt = `
+Use the retrieved documents to provide a comprehensive answer to the user's question.
+If the documents provide sufficient information, craft a clear and concise response.
+If the documents don't contain enough information to fully answer the question, acknowledge what you know
+and what you don't know.
+
+Documents:
+\${documents}
+
+User Question: \${query}
+
+Please provide a helpful, accurate and concise answer:`;
+
 // Create a bot instance
-const bot = new TelegramBot(token, { polling: true });
+const bot = new TelegramBot(token, { polling: true })
+bot.setMyCommands([
+  { command: '/start', description: 'Start the bot' },
+  { command: '/echo', description: 'Echo back your message' },
+  { command: '/code', description: 'Get the repository URL' },
+  { command: '/rag', description: 'Ask a question and get an answer' },]);
 
 // Handle /echo command
 bot.onText(/\/echo (.+)/, (msg, match) => {
@@ -31,13 +51,13 @@ bot.onText(/\/code/, (msg) => {
   bot.sendMessage(chatId, repoUrl);
 });
 
-// Handle /knowledge command
-bot.onText(/\/ai (.+)/, async (msg, match) => {
+// Handle /rag command
+bot.onText(/\/rag (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const query = match ? match[1] : '';
   
   if (!query) {
-    bot.sendMessage(chatId, 'Please provide a query after /knowledge');
+    bot.sendMessage(chatId, 'Please provide a query after /rag');
     return;
   }
   
@@ -50,13 +70,14 @@ bot.onText(/\/ai (.+)/, async (msg, match) => {
     
     // Format and send results
     if (results.length > 0) {
-      const responseText = results
-        .map((doc, i) => `${i+1}. ${doc}`)
-        .join('\n\n');
+      // Then generate and send the AI response
+      bot.sendMessage(chatId, 'Generating answer based on these documents...');
       
-      bot.sendMessage(chatId, `Results for "${query}":\n\n${responseText}`);
+      // Use the custom prompt template for RAG
+      const aiResponse = await generateResponse(query, results, customRagPrompt);
+      bot.sendMessage(chatId, `${aiResponse}`);
     } else {
-      bot.sendMessage(chatId, 'No results found.');
+      bot.sendMessage(chatId, 'No relevant documents found to answer your question.');
     }
   } catch (error) {
     console.error('Error:', error);
